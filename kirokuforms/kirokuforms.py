@@ -1,10 +1,18 @@
-# packages/langgraph-kirokuforms/kirokuforms.py
+"""KirokuForms client for Human-in-the-Loop integration with LangGraph.
+
+This module provides a client for creating and managing human review tasks 
+in KirokuForms, with special support for LangGraph integration.
+"""
 
 import requests
 import json
 import time
 from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime, timedelta
+import logging
+
+# Configure logging
+logger = logging.getLogger("kirokuforms")
 
 class KirokuFormsHITL:
     """
@@ -16,7 +24,9 @@ class KirokuFormsHITL:
         api_key: str,
         base_url: str = "https://api.kirokuforms.com/mcp",
         webhook_url: Optional[str] = None,
-        webhook_secret: Optional[str] = None
+        webhook_secret: Optional[str] = None,
+        timeout: int = 10,
+        max_retries: int = 3
     ):
         """
         Initialize the KirokuForms HITL client.
@@ -26,41 +36,91 @@ class KirokuFormsHITL:
             base_url: The KirokuForms MCP API base URL
             webhook_url: Optional URL for webhook notifications
             webhook_secret: Secret for webhook verification
+            timeout: Request timeout in seconds
+            max_retries: Maximum number of retries for failed requests
         """
         self.api_key = api_key
-        self.base_url = base_url
+        self.base_url = base_url.rstrip('/')  # Remove trailing slash if present
         self.webhook_url = webhook_url
         self.webhook_secret = webhook_secret
+        self.timeout = timeout
+        self.max_retries = max_retries
+        
+        # Verify connection on initialization
+        logger.debug(f"Initializing KirokuFormsHITL client with URL: {base_url}")
     
     def _request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Dict:
-        """Make an API request to KirokuForms."""
-        url = f"{self.base_url}/{endpoint}"
+        """
+        Make an API request to KirokuForms.
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            endpoint: API endpoint path (without leading slash)
+            data: Optional request data
+            
+        Returns:
+            API response data
+            
+        Raises:
+            ValueError: If the API returns an error
+            ConnectionError: If the connection fails
+        """
+        url = f"{self.base_url}/{endpoint}".rstrip('/')  # Ensure no double slashes
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
         
-        response = requests.request(
-            method=method,
-            url=url,
-            headers=headers,
-            json=data
-        )
+        # Add logging
+        logger.debug(f"Making {method} request to {url}")
         
-        try:
-            result = response.json()
-            if not result.get("success", False):
-                error = result.get("error", {})
-                raise ValueError(f"API Error: {error.get('message', 'Unknown error')}")
-            return result.get("data", {})
-        except json.JSONDecodeError:
-            raise ValueError(f"Invalid response from API: {response.text}")
+        # Implement retry logic
+        retries = 0
+        while retries <= self.max_retries:
+            try:
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    json=data,
+                    timeout=self.timeout
+                )
+                
+                # Check for successful status code
+                response.raise_for_status()
+                
+                # Try to parse JSON response
+                try:
+                    result = response.json()
+                    if not result.get("success", False):
+                        error = result.get("error", {})
+                        error_msg = error.get("message", "Unknown error")
+                        error_code = error.get("code", "UNKNOWN_ERROR")
+                        logger.error(f"API Error {error_code}: {error_msg}")
+                        raise ValueError(f"API Error ({error_code}): {error_msg}")
+                    return result.get("data", {})
+                except json.JSONDecodeError:
+                    logger.error(f"Invalid JSON response: {response.text}")
+                    raise ValueError(f"Invalid response from API: {response.text}")
+                
+            except requests.exceptions.RequestException as e:
+                retries += 1
+                if retries > self.max_retries:
+                    logger.error(f"Request failed after {self.max_retries} retries: {str(e)}")
+                    raise ConnectionError(f"Failed to connect to KirokuForms API: {str(e)}")
+                
+                # Exponential backoff with jitter
+                wait_time = 2 ** retries + (time.time() % 1)
+                logger.warning(f"Request failed, retrying in {wait_time:.2f} seconds...")
+                time.sleep(wait_time)
     
     def create_task(
         self,
         title: str,
         description: str = "",
-        fields: List[Dict[str, Any]] = [],
+        fields: List[Dict[str, Any]] = None,
+        template_id: Optional[str] = None,
+        initial_data: Optional[Dict[str, Any]] = None,
         expiration: Optional[str] = None,
         priority: str = "medium",
         task_id: Optional[str] = None,
@@ -72,7 +132,9 @@ class KirokuFormsHITL:
         Args:
             title: Task title
             description: Task description
-            fields: Form fields configuration
+            fields: Form fields configuration (if not using template)
+            template_id: ID of a form template to use (alternative to fields)
+            initial_data: Pre-filled data for the form fields
             expiration: Expiration time (e.g., "24h", "7d")
             priority: Task priority ("low", "medium", "high")
             task_id: Optional custom task ID
@@ -80,11 +142,22 @@ class KirokuFormsHITL:
             
         Returns:
             Task information including ID and form URL
+            
+        Raises:
+            ValueError: If neither fields nor template_id is provided
         """
+        if fields is None and template_id is None:
+            raise ValueError("Either fields or template_id must be provided")
+        
+        if fields is None:
+            fields = []
+            
         data = {
             "title": title,
             "description": description,
+            "templateId": template_id,
             "fields": fields,
+            "initialData": initial_data or {},
             "settings": {
                 "expiration": expiration,
                 "priority": priority,
@@ -93,7 +166,11 @@ class KirokuFormsHITL:
             }
         }
         
-        return self._request("POST", "tools/hitl/requestInput", data)
+        # Remove None values
+        data = {k: v for k, v in data.items() if v is not None}
+        data["settings"] = {k: v for k, v in data["settings"].items() if v is not None}
+        
+        return self._request("POST", "tools/request-human-review", data)
     
     def create_verification_task(
         self,
@@ -167,7 +244,7 @@ class KirokuFormsHITL:
                 "required": False
             })
         
-        return self.create_task(title, description, fields, **kwargs)
+        return self.create_task(title, description, fields=fields, **kwargs)
     
     def get_task_result(self, task_id: str, wait: bool = True, timeout: int = 3600) -> Dict:
         """
@@ -180,6 +257,9 @@ class KirokuFormsHITL:
             
         Returns:
             Task result data
+            
+        Raises:
+            TimeoutError: If the task is not completed within the timeout
         """
         endpoint = f"resources/hitl/tasks/{task_id}"
         
@@ -195,6 +275,50 @@ class KirokuFormsHITL:
             
             # Wait before checking again
             time.sleep(5)
+    
+    def list_tasks(
+        self, 
+        status: Optional[str] = None, 
+        limit: int = 10, 
+        offset: int = 0
+    ) -> Dict:
+        """
+        List HITL tasks.
+        
+        Args:
+            status: Filter by status (pending, completed, expired, canceled)
+            limit: Maximum number of tasks to return
+            offset: Pagination offset
+            
+        Returns:
+            List of tasks and pagination information
+        """
+        params = {
+            "limit": limit,
+            "offset": offset
+        }
+        
+        if status:
+            params["status"] = status
+        
+        # Convert params to URL query string
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        endpoint = f"resources/hitl/tasks?{query_string}"
+        
+        return self._request("GET", endpoint)
+    
+    def cancel_task(self, task_id: str) -> Dict:
+        """
+        Cancel a pending HITL task.
+        
+        Args:
+            task_id: Task ID to cancel
+            
+        Returns:
+            Updated task information
+        """
+        return self._request("POST", f"resources/hitl/tasks/{task_id}/cancel")
+
 
 def create_kiroku_interrupt_handler(api_key: str, **kwargs) -> Callable:
     """
@@ -225,6 +349,7 @@ def create_kiroku_interrupt_handler(api_key: str, **kwargs) -> Callable:
         description = interrupt_data.get("description", "Please verify the following information")
         fields = interrupt_data.get("fields", [])
         data = interrupt_data.get("data", {})
+        wait_for_result = interrupt_data.get("wait_for_result", True)
         
         if not fields and data:
             # Create a verification task based on the data
@@ -241,17 +366,27 @@ def create_kiroku_interrupt_handler(api_key: str, **kwargs) -> Callable:
                 fields=fields
             )
         
-        # Wait for the task to be completed (blocking)
-        result = client.get_task_result(task["taskId"])
-        
-        # Update the state with the result
-        return {
+        # Initialize result structure
+        result = {
             **state,
             "human_verification": {
-                "completed": True,
+                "completed": False,
                 "task_id": task["taskId"],
-                "result": result
+                "form_url": task["formUrl"],
+                "result": None
             }
         }
+        
+        # Wait for the task to be completed if requested
+        if wait_for_result:
+            try:
+                submission = client.get_task_result(task["taskId"])
+                result["human_verification"]["completed"] = True
+                result["human_verification"]["result"] = submission
+            except TimeoutError as e:
+                # Task not completed, return pending state
+                logger.warning(f"Task {task['taskId']} not completed: {str(e)}")
+        
+        return result
     
     return interrupt_handler
