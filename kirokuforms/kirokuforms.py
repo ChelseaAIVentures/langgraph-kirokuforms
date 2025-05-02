@@ -149,14 +149,9 @@ class KirokuFormsHITL:
         if fields is None and template_id is None:
             raise ValueError("Either fields or template_id must be provided")
         
-        if fields is None:
-            fields = []
-            
         data = {
             "title": title,
             "description": description,
-            "templateId": template_id,
-            "fields": fields,
             "initialData": initial_data or {},
             "settings": {
                 "expiration": expiration,
@@ -165,7 +160,19 @@ class KirokuFormsHITL:
                 "callbackUrl": callback_url or self.webhook_url
             }
         }
-        
+
+         # Add templateId or fields, but not both with fields being empty
+        if template_id is not None:
+            data["templateId"] = template_id
+            # Only add fields if non-empty when using a template
+            if fields and len(fields) > 0:
+                data["fields"] = fields
+        elif fields is not None:
+            # Using fields without template
+            if len(fields) == 0:
+                raise ValueError("At least one field is required when not using a template")
+            data["fields"] = fields
+
         # Remove None values
         data = {k: v for k, v in data.items() if v is not None}
         data["settings"] = {k: v for k, v in data["settings"].items() if v is not None}
