@@ -27,8 +27,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kiroku-forms/langgraph-kirokuforms"
-Repository = "https://github.com/kiroku-forms/langgraph-kirokuforms.git"
+Homepage = "https://github.com/ChelseaAIVentures/langgraph-kirokuforms"
+Repository = "https://github.com/ChelseaAIVentures/langgraph-kirokuforms.git"
 
 [tool.setuptools]
 py-modules = ["kirokuforms"]
