@@ -7,7 +7,7 @@ setup(
     description="KirokuForms integration for LangGraph",
     author="KirokuForms Team",
     author_email="info@kirokuforms.com",
-    url="https://github.com/kirokuforms/langgraph-kirokuforms",
+    url="https://github.com/ChelseaAIVentures/langgraph-kirokuforms",
     packages=find_packages(),
     install_requires=[
         "requests>=2.25.0",
