@@ -38,7 +38,7 @@ requests_log.propagate = True # Ensure requests logs go to the basicConfig strea
 
 
 # --- Test Credentials and Configuration ---
-CREDS_FILE = Path(__file__).parent / '.test-credentials.json'
+CREDS_FILE = Path(__file__).parent.parent / '.credentials.json'
 if CREDS_FILE.exists():
     with open(CREDS_FILE, 'r') as f:
         TEST_CREDS = json.load(f)
