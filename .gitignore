@@ -174,5 +174,5 @@ cython_debug/
 .pypirc
 
 # Ignore local test credentials
-tests/.test-credentials.json
+.credentials.json
 
