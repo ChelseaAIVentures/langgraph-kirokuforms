@@ -191,7 +191,7 @@ def test_mcp_capabilities(hitl_client):
     # Verify capabilities structure
     assert "capabilities" in capabilities
     assert "tools" in capabilities["capabilities"]
-    assert "hitl/requestInput" in capabilities["capabilities"]["tools"]
+    assert "hitl-requestInput" in capabilities["capabilities"]["tools"]
 
     logger.info(f"Server capabilities: {json.dumps(capabilities, indent=2)}")
 

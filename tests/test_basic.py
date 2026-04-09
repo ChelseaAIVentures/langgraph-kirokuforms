@@ -13,9 +13,20 @@ import time
 from unittest import mock
 from kirokuforms import KirokuFormsHITL, create_kiroku_interrupt_handler
 
-# Configuration for tests
-API_KEY = os.environ.get("KIROKU_TEST_API_KEY", "test-api-key")
-BASE_URL = os.environ.get("KIROKU_TEST_API_URL", "http://localhost:4321/api/mcp")
+# Configuration for tests — load from .credentials.json, env vars, or defaults
+def _load_credentials():
+    import json
+    creds_path = os.path.join(os.path.dirname(__file__), "..", ".credentials.json")
+    if os.path.exists(creds_path):
+        with open(creds_path) as f:
+            creds = json.load(f)
+            return creds.get("api_key", "test-api-key"), creds.get("base_url", "http://localhost:4321/api/mcp")
+    return (
+        os.environ.get("KIROKU_TEST_API_KEY", "test-api-key"),
+        os.environ.get("KIROKU_TEST_API_URL", "http://localhost:4321/api/mcp"),
+    )
+
+API_KEY, BASE_URL = _load_credentials()
 
 @pytest.fixture
 def hitl_client():
@@ -35,7 +46,7 @@ def test_api_connection(hitl_client):
     assert response["name"] == "KirokuForms MCP Server"
     assert "capabilities" in response
     assert "tools" in response["capabilities"]
-    assert "hitl/requestInput" in response["capabilities"]["tools"]
+    assert "hitl-requestInput" in response["capabilities"]["tools"]
 
 def test_create_task(hitl_client):
     """Test creating a HITL task"""
@@ -81,8 +92,10 @@ def test_get_task_result(hitl_client):
         mock_request.return_value = {
             "status": "completed",
             "submission": {
-                "question_1": "Test response",
-                "approval": "yes"
+                "data": {
+                    "question_1": "Test response",
+                    "approval": "yes"
+                }
             }
         }
         
@@ -121,14 +134,14 @@ def test_create_verification_task(hitl_client):
 def test_interrupt_handler():
     """Test creating and using an interrupt handler for LangGraph"""
     # Create a mock KirokuFormsHITL to avoid real API calls
-    with mock.patch('kirokuforms.KirokuFormsHITL') as MockClient:
+    with mock.patch('kirokuforms.kirokuforms.KirokuFormsHITL') as MockClient:
         # Configure the mock to return appropriate values
         mock_client = MockClient.return_value
         mock_client.create_verification_task.return_value = {"taskId": "test-task-id"}
         mock_client.get_task_result.return_value = {"is_correct": "yes", "comments": "Looks good"}
         
         # Create the interrupt handler
-        handler = create_kiroku_interrupt_handler("test-api-key")
+        handler = create_kiroku_interrupt_handler(API_KEY, base_url=BASE_URL)
         
         # Test the handler with a sample state and interrupt data
         state = {"key": "value"}
